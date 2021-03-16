@@ -81,12 +81,14 @@ def get_midi_note(sound):
         except ValueError:
             pass
 
-    # Try finding note names in sound name
-    name = sound.name.split('.')[0]
-    try:
-        return note_name_to_number(name)
-    except ValueError as e:
-        pass
+    # Try finding note names in tokenized sound name
+    name = sound.name
+    name_parts = name.replace('-', ' ').replace('_', ' ').replace('.', ' ').split(' ')
+    for name_part in name_parts:
+        try:
+            return note_name_to_number(name_part)
+        except ValueError as e:
+            pass
 
     return None
 
@@ -175,7 +177,7 @@ def make_instrument_preset_from_pack(pack_id, max_sounds_to_use=64, use_original
 
     # Remove some notes if using more than the limit
     if len(sounds) > max_sounds_to_use:
-        n_to_remove = max_sounds_to_use - len(sounds)
+        n_to_remove = abs(max_sounds_to_use - len(sounds))
         logger.info('- Removing {} sounds because exceeding max'.format(n_to_remove))
         positions_to_remove = list(range(0, len(sounds), len(sounds) // n_to_remove))
         positions_to_remove = positions_to_remove[:n_to_remove]
