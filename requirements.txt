@@ -1,0 +1,2 @@
+git+https://github.com/MTG/freesound-python.git
+ffmpeg-python==0.2.0
