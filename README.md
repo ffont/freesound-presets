@@ -42,6 +42,7 @@ optional arguments:
 
  * Run the image and pass arguments to create presets
 
+```
 # Create instrument presets for "source"
 docker run -it --rm -v `pwd`:/app freesound-presets -e source -t instrument -p 21055 -n Piano
 docker run -it --rm -v `pwd`:/app freesound-presets -e source -t instrument -p 24590 -n DDRM -l
