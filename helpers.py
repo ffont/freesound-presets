@@ -80,25 +80,38 @@ def mkdir_p(path):
             raise
 
 
-class SourceExporter(object):
+class BaseExporter(object):
 
-    device_name = 'Source'
+    device_name = 'Base'
+    extension = 'ext'
+    supported_types = []
 
-    def __init__(self, sounds, preset_number=0, preset_name="NoName", loop=0, include_sounds=False):
+    def __init__(self, sounds, sound_overwrite_exporter_fields=None, ptype=None, preset_number=0, preset_name="NoName", include_sounds=False):
         self.sounds = sounds
+        self.sound_overwrite_exporter_fields = sound_overwrite_exporter_fields
         self.preset_name = preset_name
         self.preset_number = preset_number
-        self.loop = loop
         self.include_sounds = include_sounds
+
+        if sound_overwrite_exporter_fields is not None:
+            assert (len(sounds) == len(sound_overwrite_exporter_fields)), 'Number of sounds and number of overwrite fields for sounds does not match'
+
+        assert (ptype in self.supported_types), 'Unsupported preset type for exporter'
 
     def get_base_path(self):
         return os.path.join('/app/presets', self.device_name)
    
     def get_preset_file_path(self):
-        return os.path.join(self.get_base_path(), '{}.xml'.format(self.preset_name))
+        return os.path.join(self.get_base_path(), '{}.{}'.format(self.preset_name, self.extension))
 
-    def get_sound_file_path(self):
+    def get_sound_file_base_path(self):
         return os.path.join(self.get_base_path(), 'sounds')
+
+    def get_sound_file_path(self, sound):
+        return os.path.join(self.get_sound_file_base_path(), sound['path'].split('/')[-1])
+
+    def get_converted_sound_file_path(self, sound):
+        return os.path.join(self.get_sound_file_base_path(), sound['path'].split('/')[-1].split('.')[0] + '.wav')
 
     def save_preset_file(self, file_contents):
         file_path = self.get_preset_file_path()
@@ -107,8 +120,8 @@ class SourceExporter(object):
         fid.write(file_contents)
         fid.close()
 
-    def save_sound_file(self, sound):
-        file_path = os.path.join(self.get_base_path(), 'sounds', sound['path'].split('/')[-1])
+    def save_sound_file(self, sound, convert_to_wav=False):
+        file_path = self.get_sound_file_path(sound)
         if not os.path.exists(file_path):
             mkdir_p(os.path.dirname(file_path))
             try:
@@ -120,8 +133,26 @@ class SourceExporter(object):
         if len(self.sounds) == 0:
             logger.info('- No sounds to export...')
             return
-
         logger.info('- Exporting preset of {} sounds with {} exporter'.format(len(self.sounds), self.device_name))
+        file_contents = self.get_file_contents_for_device()
+        
+        self.save_preset_file(file_contents)
+        if self.include_sounds:
+            for sound in self.sounds:
+                self.save_sound_file(sound)
+
+    def get_file_contents_for_device(self):
+        raise NotImplementedError
+
+        
+class SourceExporter(BaseExporter):
+
+    device_name = 'Source'
+    extension = 'xml'
+    supported_types = ['instrument']
+
+    def get_file_contents_for_device(self):
+        
         sounds_info = ""
         for count, sound in enumerate(self.sounds):
 
@@ -133,8 +164,10 @@ class SourceExporter(object):
             sound.update({
                 'count': count,
                 'midi_notes_hex': midi_notes_hex,
-                'launchMode': 1 if self.loop else 0
+                'launchMode': 0,
             })
+            if self.sound_overwrite_exporter_fields is not None:
+                sound.update(self.sound_overwrite_exporter_fields[count])
             sounds_info += '''    
     <soundInfo soundId="{id}" soundName="{name}" soundUser="{username}" soundLicense="{license}" soundOGGURL="{preview_url}" downloadProgress="100" soundDurationInSeconds="{duration}">
         <fsAnalysis/>
@@ -166,7 +199,242 @@ class SourceExporter(object):
             sounds_info
         )
 
-        self.save_preset_file(contents)
-        if self.include_sounds:
-            for sound in self.sounds:
-                self.save_sound_file(sound)
+        return contents
+
+
+class BlackboxExporter(BaseExporter):
+
+    device_name = 'Blackbox'
+    extension = 'xml'
+    supported_types = ['16pad', 'loops']
+
+    def get_base_path(self):
+        return os.path.join('/app/presets', self.device_name, self.preset_name)
+
+    def get_sound_file_base_path(self):
+        return self.get_base_path()
+
+    def get_preset_file_path(self):
+        return os.path.join(self.get_base_path(), 'preset.xml')
+
+    def get_file_contents_for_device(self):
+
+        sounds_info = ""
+        sounds = self.sounds[:16]
+        if len(self.sounds) < 16:
+            for i in range(0, 16 - self.sounds):
+                sounds.append(None)
+
+        for count, sound in enumerate(sounds):
+            if sound is not None:
+                sound.update({
+                    'row': count % 4,
+                    'column': count // 4,
+                    'filename': '.\\' + self.get_converted_sound_file_path(sound).split('/')[-1],
+                    'sample_length': int(sound['duration'] * 44100),
+                    'stype': 'sample',
+                    'samtrigtype': 0,
+                    'loopmode': 0,
+                    'cellmode': 0,
+                })
+                if self.sound_overwrite_exporter_fields is not None:
+                    sound.update(self.sound_overwrite_exporter_fields[count])
+                sounds_info += '''
+        <cell row="{row}" column="{column}" layer="0" filename="{filename}" type="{stype}">
+            <params gaindb="0" pitch="0" panpos="0" samtrigtype="{samtrigtype}" loopmode="{loopmode}" loopmodes="0" midimode="0" midioutchan="0" reverse="0" cellmode="{cellmode}" envattack="0" envdecay="0" envsus="1000" envrel="200" samstart="0" samlen="{sample_length}" loopstart="0" loopend="{sample_length}" quantsize="3" synctype="5" actslice="1" outputbus="0" polymode="0" slicestepmode="0" chokegrp="0" dualfilcutoff="0" rootnote="0" beatcount="0" fx1send="0" fx2send="0" multisammode="0" interpqual="0" playthru="0" slicerquantsize="13" slicersync="0" padnote="0" loopfadeamt="0" grainsize="0" graincount="3" gainspreadten="0" grainreadspeed="1000" recpresetlen="0" recquant="3" recinput="0" recusethres="0" recthresh="-20000" recmonoutbus="0"/>
+            <modsource dest="gaindb" src="velocity" slot="0" amount="400"/>
+            <slices/>
+        </cell>'''.format(**sound)
+
+            else:
+                sounds_info += '''
+        <cell row="{row}" column="{column}" layer="0" filename="" type="samtempl">
+            <params gaindb="0" pitch="0" panpos="0" samtrigtype="0" loopmode="0" loopmodes="0" midimode="0" midioutchan="0" reverse="0" cellmode="0" envattack="0" envdecay="0" envsus="1000" envrel="200" quantsize="3" synctype="5" outputbus="0" polymode="0" slicestepmode="0" chokegrp="0" dualfilcutoff="0" rootnote="0" beatcount="0" fx1send="0" fx2send="0" interpqual="0" playthru="0" padnote="0" deftemplate="1" recpresetlen="0" recquant="3" recinput="0" recusethres="0" recthresh="-20000" recmonoutbus="0"/>
+            <slices/>
+        </cell>'''.format(**sound)
+
+        contents = '''<?xml version="1.0" encoding="UTF-8"?>
+
+<document>
+    <session>{}
+        <cell row="0" column="4" layer="0" filename="" type="samtempl">
+            <params gaindb="0" pitch="0" panpos="0" samtrigtype="0" loopmode="0" loopmodes="0" midimode="0" midioutchan="0" reverse="0" cellmode="0" envattack="0" envdecay="0" envsus="1000" envrel="200" quantsize="3" synctype="5" outputbus="0" polymode="0" slicestepmode="0" chokegrp="0" dualfilcutoff="0" rootnote="0" beatcount="0" fx1send="0" fx2send="0" interpqual="0" playthru="0" padnote="0" deftemplate="1" recpresetlen="0" recquant="3" recinput="0" recusethres="0" recthresh="-20000" recmonoutbus="0"/>
+            <slices/>
+        </cell>
+        <cell row="1" column="4" layer="0" filename="" type="samtempl">
+            <params gaindb="0" pitch="0" panpos="0" samtrigtype="0" loopmode="0" loopmodes="0" midimode="0" midioutchan="0" reverse="0" cellmode="0" envattack="0" envdecay="0" envsus="1000" envrel="200" quantsize="3" synctype="5" outputbus="0" polymode="0" slicestepmode="0" chokegrp="0" dualfilcutoff="0" rootnote="0" beatcount="0" fx1send="0" fx2send="0" interpqual="0" playthru="0" padnote="0" deftemplate="1" recpresetlen="0" recquant="3" recinput="0" recusethres="0" recthresh="-20000" recmonoutbus="0"/>
+            <slices/>
+        </cell>
+        <cell row="2" column="4" layer="0" filename="" type="samtempl">
+            <params gaindb="0" pitch="0" panpos="0" samtrigtype="0" loopmode="0" loopmodes="0" midimode="0" midioutchan="0" reverse="0" cellmode="0" envattack="0" envdecay="0" envsus="1000" envrel="200" quantsize="3" synctype="5" outputbus="0" polymode="0" slicestepmode="0" chokegrp="0" dualfilcutoff="0" rootnote="0" beatcount="0" fx1send="0" fx2send="0" interpqual="0" playthru="0" padnote="0" deftemplate="1" recpresetlen="0" recquant="3" recinput="0" recusethres="0" recthresh="-20000" recmonoutbus="0"/>
+            <slices/>
+        </cell>
+        <cell row="3" column="4" layer="0" filename="" type="samtempl">
+            <params gaindb="0" pitch="0" panpos="0" samtrigtype="0" loopmode="0" loopmodes="0" midimode="0" midioutchan="0" reverse="0" cellmode="0" envattack="0" envdecay="0" envsus="1000" envrel="200" quantsize="3" synctype="5" outputbus="0" polymode="0" slicestepmode="0" chokegrp="0" dualfilcutoff="0" rootnote="0" beatcount="0" fx1send="0" fx2send="0" interpqual="0" playthru="0" padnote="0" deftemplate="1" recpresetlen="0" recquant="3" recinput="0" recusethres="0" recthresh="-20000" recmonoutbus="0"/>
+            <slices/>
+        </cell>
+        <cell row="0" column="0" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="1" column="0" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="2" column="0" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="3" column="0" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="0" column="1" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="1" column="1" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="2" column="1" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="3" column="1" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="0" column="2" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="1" column="2" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="2" column="2" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="3" column="2" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="0" column="3" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="1" column="3" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="2" column="3" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="3" column="3" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="0" column="4" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="1" column="4" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="2" column="4" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="3" column="4" layer="1" type="noteseq">
+            <params notesteplen="10" notestepcount="16" dutycyc="1000" midioutchan="0" quantsize="1" padnote="0" dispmode="1" seqplayenable="0" seqstepmode="1"/>
+            <sequence/>
+        </cell>
+        <cell row="0" column="0" layer="2" name="Section 1" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="1" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="2" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="3" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="4" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="5" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="6" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="7" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="8" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="9" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="10" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="11" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="12" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="13" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="14" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="15" column="0" layer="2" name="" type="section">
+            <params sectionlenbars="8"/>
+            <sequence/>
+        </cell>
+        <cell row="0" layer="3" type="delay">
+            <params delaymustime="6" feedback="400" dealybeatsync="1" delay="400"/>
+        </cell>
+        <cell row="1" layer="3" type="reverb">
+            <params decay="600" predelay="40" damping="500"/>
+        </cell>
+        <cell row="2" layer="3" type="filter">
+            <params cutoff="600" res="400" filtertype="0" fxtrigmode="0"/>
+        </cell>
+        <cell row="3" layer="3" type="bitcrusher">
+            <params/>
+        </cell>
+        <cell type="song">
+            <params globtempo="120" songmode="0" sectcount="1" sectloop="1" swing="50" keymode="1" keyroot="3"/>
+        </cell>
+    </session>
+</document>'''.format(
+            sounds_info
+        )
+
+        return contents

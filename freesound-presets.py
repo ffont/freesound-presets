@@ -1,12 +1,13 @@
 import logging
 import os
+import random
 import re
 
 import freesound
 
 from api_key import API_KEY
 from argparse import ArgumentParser
-from helpers import DownloadAndConvertSoundsThread, SourceExporter
+from helpers import DownloadAndConvertSoundsThread, SourceExporter, BlackboxExporter
 
 
 logger = logging.getLogger()
@@ -14,7 +15,8 @@ logger = logging.getLogger()
 freesound_client = freesound.FreesoundClient()
 freesound_client.set_token(API_KEY)
 
-available_preset_types = ['instrument']
+available_preset_types = ['instrument', '16pad', 'loops']
+available_exporters = ['source', 'blackbox']
 
 
 def note_name_to_number(note_name):
@@ -108,7 +110,7 @@ def get_effective_start_time(sound):
                     return sound.analysis.rhythm.onset_times
                 else:
                     return float(sound.analysis.rhythm.onset_times[0])
-    return None
+    return 0
 
 
 def prepare_sound(sound, use_original=False, use_converted=False):
@@ -137,6 +139,12 @@ def prepare_sound(sound, use_original=False, use_converted=False):
     data['midi_velocity'] = get_midi_velocity(sound)
     return {key: value for key, value in data.items() if value is not None}
 
+def download_sounds(sounds, use_converted_files):
+    for sound in sounds:
+        logger.debug('{}'.format(sound['id']))
+        dw_thread = DownloadAndConvertSoundsThread(sound['preview_url'], sound['id'], convert=use_converted_files)
+        dw_thread.start()
+        dw_thread.join()  # Wait until download finishes, we don't support async downloads (yet)
 
 def make_instrument_preset_from_pack(pack_id, max_sounds_to_use=64, use_original_files=False, use_converted_files=False, include_sounds=False):
     fs_fields_param = "id,previews,license,name,username,analysis,type,filesize,tags,duration,description"
@@ -149,13 +157,9 @@ def make_instrument_preset_from_pack(pack_id, max_sounds_to_use=64, use_original
     sounds = [prepare_sound(result, use_original=use_original_files, use_converted=use_converted_files) for result in results]
     
     # Download the sounds
-    logger.info('- Downloading and converting sounds')
     if include_sounds:
-        for sound in sounds:
-            logger.debug('{}'.format(sound['id']))
-            dw_thread = DownloadAndConvertSoundsThread(sound['preview_url'], sound['id'], convert=use_converted_files)
-            dw_thread.start()
-            dw_thread.join()  # Wait until download finishes, we don't support async downloads (yet)
+        logger.info('- Downloading and converting sounds')
+        download_sounds(sounds, use_converted_files=use_converted_files)
         
     # Keep only one velocity layer
     logger.info('- Removing redundant velocity layers')
@@ -204,15 +208,35 @@ def make_instrument_preset_from_pack(pack_id, max_sounds_to_use=64, use_original
         all_midi_notes += sound['midi_notes']
     assert (len(all_midi_notes) == len(set(all_midi_notes))), "Duplicated midi notes found..."
         
-    return sounds   
+    return sounds
 
+def make_16pad_preset_from_query(query, use_original_files=False, use_converted_files=False, include_sounds=False, max_duration=0.5):
+    fs_fields_param = "id,previews,license,name,username,analysis,type,filesize,tags,duration,description"
+    fs_descriptors_param = "rhythm.onset_times"
+
+    # Search for sounds and select 16
+    results = freesound_client.text_search(query=query, filter='duration:[0 TO {}]'.format(str(max_duration)), fields=fs_fields_param, descriptors=fs_descriptors_param, page_size=150)
+    results_list = [r for r in results if hasattr(r, 'analysis')]
+    sounds = [prepare_sound(result, use_original=use_original_files, use_converted=use_converted_files) for result in random.sample(results_list, 16)]
+    
+    # Download the sounds
+    if include_sounds:
+        logger.info('- Downloading and converting sounds')
+        download_sounds(sounds, use_converted_files=use_converted_files)
+
+    return sounds
+
+def make_loops_preset_from_query(query, use_original_files=False, use_converted_files=False, include_sounds=False):
+    return make_16pad_preset_from_query(query, use_original_files=use_original_files, use_converted_files=use_converted_files, include_sounds=include_sounds, max_duration=10)
 
 if __name__ == '__main__':
     parser = ArgumentParser(description="""
     Freesound Presets. Generates sampler presets based on Freesound sounds and exports them in differen sampler formats.""")
     parser.add_argument('-v', '--verbose', help='if set, prints detailed info on screen', action='store_const', const=True, default=False)
+    parser.add_argument('-e', '--exporter', help='one of {}'.format(str(available_exporters)), required=True)
     parser.add_argument('-t', '--type', help='one of {}'.format(str(available_preset_types)), required=True)
     parser.add_argument('-p', '--pack', help='Freesound pack ID to get instrument samples from', default=None)
+    parser.add_argument('-q', '--query', help='Textual query for 16pad presets', default=None)
     parser.add_argument('-l', '--loop', help='configure sounds to loop', action='store_const', const=True, default=False)
     parser.add_argument('-n', '--name', help='name for the output preset', required=True)
     parser.add_argument('-i', '--include-sounds', help='include sound files with the preset', action='store_const', const=True, default=False)
@@ -232,4 +256,40 @@ if __name__ == '__main__':
             raise Exception('Invalid --pack parameter, must be an integer')
         logger.info('Creating {} preset {}'.format(args.type, args.name))
         sounds = make_instrument_preset_from_pack(pack_id, use_original_files=args.originals, use_converted_files=args.convert, include_sounds=args.include_sounds)
-        SourceExporter(sounds=sounds, loop=args.loop, preset_name=args.name, include_sounds=args.include_sounds).export()
+
+    elif args.type == '16pad':
+        logger.info('Creating {} preset {}'.format(args.type, args.name))
+        sounds = make_16pad_preset_from_query(args.query, use_original_files=args.originals, use_converted_files=args.convert, include_sounds=args.include_sounds)
+
+    elif args.type == 'loops':
+        logger.info('Creating {} preset {}'.format(args.type, args.name))
+        sounds = make_loops_preset_from_query(args.query, use_original_files=args.originals, use_converted_files=args.convert, include_sounds=args.include_sounds)
+
+
+    if args.exporter == 'source':
+        if args.loop:
+            sound_overwrite_exporter_fields = [{'launchMode': 1} for sound in sounds]
+        else:
+            sound_overwrite_exporter_fields = None
+        SourceExporter(
+            sounds=sounds, 
+            sound_overwrite_exporter_fields=sound_overwrite_exporter_fields, 
+            preset_name=args.name, 
+            ptype=args.type,
+            include_sounds=args.include_sounds).export()
+
+    elif args.exporter == 'blackbox':
+        if args.type == 'loops':
+            sound_overwrite_exporter_fields = [{
+                'stype': 'sample',
+                'samtrigtype': 2,
+                'loopmode': 1,
+                'cellmode': 1} for sound in sounds]
+        else:
+            sound_overwrite_exporter_fields = None
+        BlackboxExporter(
+            sounds=sounds, 
+            sound_overwrite_exporter_fields=sound_overwrite_exporter_fields, 
+            preset_name=args.name, 
+            ptype=args.type,
+            include_sounds=args.include_sounds).export()
