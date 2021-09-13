@@ -52,4 +52,7 @@ docker run -it --rm -v `pwd`:/app freesound-presets -e source -t instrument -p 2
 docker run -it --rm -v `pwd`:/app freesound-presets -e blackbox -t 16pad -q 'percussion' -n 'FsPerc' -ic
 docker run -it --rm -v `pwd`:/app freesound-presets -e blackbox -t 16pad -q 'wood' -n 'FsWood' -ic
 docker run -it --rm -v `pwd`:/app freesound-presets -e blackbox -t 16pad -q 'wood' -n 'FsGlass' -ic
+
+# Create loops presets for "blackbox"
+docker run -it --rm -v `pwd`:/app freesound-presets -e blackbox -t loops -q '120bpm' -n 'Fs120Bpm' -ic
 ```
