@@ -7,18 +7,40 @@ This is a utility to create sampler presets from Freesound sound and export them
  
  * Clone the repository and `cd` to it
 
+ * Make a copy of `api_key.example.py` and rename it to `apikey.py`. [Generate an API key from Freesoud](https://freesound.org/apiv2/apply) and add it to `apikey.py`.
+ 
  * Build docker image
 
 ```
 docker build -t freesound-presets .
 ```
 
- * Run the image and pass arguments to create presets
-
+ * Help command
 
 ```
-# See help
 docker run -it --rm -v `pwd`:/app freesound-presets -h
+usage: freesound-presets.py [-h] [-v] -t TYPE [-p PACK] [-l] -n NAME [-i] [-c] [-o]
+
+Freesound Presets. Generates sampler presets based on Freesound sounds and exports them in differen sampler formats.
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -v, --verbose         if set, prints detailed info on screen
+  -e EXPORTER, --exporter EXPORTER
+                        one of ['source', 'blackbox']
+  -t TYPE, --type TYPE  one of ['instrument', '16pad', 'loops']
+  -p PACK, --pack PACK  Freesound pack ID to get instrument samples from
+  -q QUERY, --query QUERY
+                        Textual query for 16pad presets
+  -l, --loop            configure sounds to loop
+  -n NAME, --name NAME  name for the output preset
+  -i, --include-sounds  include sound files with the preset
+  -c, --convert         convert included sound files to WAV
+  -o, --originals       use original sound files when downloading
+
+```
+
+ * Run the image and pass arguments to create presets
 
 # Create instrument presets for "source"
 docker run -it --rm -v `pwd`:/app freesound-presets -e source -t instrument -p 21055 -n Piano
