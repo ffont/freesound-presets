@@ -5,8 +5,12 @@ import os
 import urllib
 import shutil
 import errno
+import uuid
 
 logger = logging.getLogger()
+
+def generate_uuid():
+    return uuid.uuid4().hex
 
 
 def convert_to_wav(input_filename, output_filename, samplerate=44100):
@@ -152,50 +156,43 @@ class SourceExporter(BaseExporter):
     supported_types = ['instrument']
 
     def get_file_contents_for_device(self):
-        
-        sounds_info = ""
         for count, sound in enumerate(self.sounds):
-
-            assinged_notes_aux = ['0'] * 128
-            for note in sound['midi_notes']:
-                assinged_notes_aux[note] = '1'
-            midi_notes_hex = hex(int("".join(reversed(''.join(assinged_notes_aux))), 2)) 
-
             sound.update({
-                'count': count,
-                'midi_notes_hex': midi_notes_hex,
-                'launchMode': 0,
+                'uuid': generate_uuid(),
             })
             if self.sound_overwrite_exporter_fields is not None:
                 sound.update(self.sound_overwrite_exporter_fields[count])
+
+        assinged_notes_aux = ['1'] * 128
+        all_midi_notes_hex = hex(int("".join(reversed(''.join(assinged_notes_aux))), 2)) 
+        sounds_info = '''
+  <SOUND uuid="{uuid}" launchMode="{launchMode}" startPosition="{start_percentage}"
+         loopStartPosition="0.3" loopEndPosition="0.5" gain="-10.0" vel2CutoffAmt="12.0"
+         vel2GainAmt="0.75" midiChannel="0" midiNotes="{midi_notes_hex}">'''.format(**{
+                'uuid': generate_uuid(),
+                'start_percentage': self.sounds[0]['start_percentage'],
+                'midi_notes_hex': all_midi_notes_hex,
+                'launchMode': self.sounds[0]['launchMode']
+            })
+        for count, sound in enumerate(self.sounds):
             sounds_info += '''    
-    <soundInfo soundId="{id}" soundName="{name}" soundUser="{username}" soundLicense="{license}" soundOGGURL="{preview_url}" downloadProgress="100" soundDurationInSeconds="{duration}">
-        <fsAnalysis/>
-        <SamplerSound midiNotes="{midi_notes_hex}" loadedPreviewVersion="1" soundIdx="{count}">
-        <SamplerSoundParameter parameter_type="int" parameter_name="launchMode" parameter_value="{launchMode}"/>
-        <SamplerSoundParameter parameter_type="float" parameter_name="startPosition" parameter_value="{start_percentage}"/>
-        <SamplerSoundParameter parameter_type="float" parameter_name="loopStartPosition" parameter_value="0.3"/>
-        <SamplerSoundParameter parameter_type="float" parameter_name="loopEndPosition" parameter_value="0.5"/>
-        <SamplerSoundParameter parameter_type="float" parameter_name="gain" parameter_value="-10.0"/>
-        <SamplerSoundParameter parameter_type="int" parameter_name="midiRootNote" parameter_value="{midi_note}"/>
-        <SamplerSoundParameter parameter_type="float" parameter_name="vel2CutoffAmt" parameter_value="12.0"/>
-        <SamplerSoundParameter parameter_type="float" parameter_name="vel2GainAmt" parameter_value="0.75"/>
-        </SamplerSound>
-    </soundInfo>'''.format(**sound)
+    <SOUND_SAMPLE uuid="{uuid}" name="{name}" 
+                  soundId="{id}" format="{type}" duration="{duration}" soundFromFreesound="1"
+                  previewURL="{preview_url}"
+                  usesPreview="0" midiRootNote="{midi_note}" midiVelocityLayer="0" username="{username}"
+                  license="{license}">
+    </SOUND_SAMPLE>'''.format(**sound)
+        sounds_info += '''
+  </SOUND>'''
 
         contents = '''<?xml version="1.0" encoding="UTF-8"?>
 
-<SourcePresetState presetName="{0}" presetNumber="{1}" noteLayoutType="0">
-  <Sampler NumVoices="16">
-    <ReverbParameters reverb_roomSize="0.0" reverb_damping="0.0" reverb_wetLevel="0.0"
-                      reverb_dryLevel="1.0" reverb_width="1.0" reverb_freezeMode="1.0"/>
-  </Sampler>
-  <soundsInfo>
-    {2}
-  </soundsInfo>
-</SourcePresetState>'''.format(
+<PRESET uuid="{0}" name="{1}" noteLayoutType="0" numVoices="8" reverbDamping="0.0" 
+        reverbWetLevel="0.0" reverbDryLevel="1.0" reverbWidth="0.5" reverbFreezeMode="0.0" 
+        reverbRoomSize="0.5">{2}
+</PRESET>'''.format(
+            generate_uuid(),
             self.preset_name,
-            self.preset_number,
             sounds_info
         )
 

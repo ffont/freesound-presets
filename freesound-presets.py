@@ -153,9 +153,15 @@ def make_instrument_preset_from_pack(pack_id, max_sounds_to_use=64, use_original
     # Get sounds info
     logger.info('- Getting pack info and preparing sounds')
     pack = freesound_client.get_pack(pack_id)
+    all_results = []
     results = pack.get_sounds(fields=fs_fields_param, descriptors=fs_descriptors_param, page_size=150)
-    sounds = [prepare_sound(result, use_original=use_original_files, use_converted=use_converted_files) for result in results]
-    
+    all_results += results
+    while results.next is not None:
+        results = results.next_page()
+        all_results += results 
+    sounds = [prepare_sound(result, use_original=use_original_files, use_converted=use_converted_files) for result in all_results]
+    logger.info('- Found {} sounds!'.format(len(sounds)))
+
     # Download the sounds
     if include_sounds:
         logger.info('- Downloading and converting sounds')
