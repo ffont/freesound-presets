@@ -156,15 +156,21 @@ class SourceExporter(BaseExporter):
     supported_types = ['instrument']
 
     def get_file_contents_for_device(self):
+        midi_velocities = [] 
+        for count, sound in enumerate(self.sounds):
+            midi_velocities.append(sound.get('midi_velocity', 0))
+        midi_velocities = sorted(list(set(midi_velocities)))
+        midi_layers_map = {midi_velocity: layer_n for layer_n, midi_velocity in enumerate(midi_velocities)}
+        midi_layers_map[0] = 0
         for count, sound in enumerate(self.sounds):
             sound.update({
                 'uuid': generate_uuid(),
+                'velocity_layer': midi_layers_map[sound.get('midi_velocity', 0)]
             })
             if self.sound_overwrite_exporter_fields is not None:
                 sound.update(self.sound_overwrite_exporter_fields[count])
-
         assinged_notes_aux = ['1'] * 128
-        all_midi_notes_hex = hex(int("".join(reversed(''.join(assinged_notes_aux))), 2)) 
+        all_midi_notes_hex = str(hex(int("".join(reversed(''.join(assinged_notes_aux))), 2)))[2:]
         sounds_info = '''
   <SOUND uuid="{uuid}" launchMode="{launchMode}" startPosition="{start_percentage}"
          loopStartPosition="0.3" loopEndPosition="0.5" gain="-10.0" vel2CutoffAmt="12.0"
@@ -179,7 +185,7 @@ class SourceExporter(BaseExporter):
     <SOUND_SAMPLE uuid="{uuid}" name="{name}" 
                   soundId="{id}" format="{type}" duration="{duration}" soundFromFreesound="1"
                   previewURL="{preview_url}"
-                  usesPreview="0" midiRootNote="{midi_note}" midiVelocityLayer="0" username="{username}"
+                  usesPreview="0" midiRootNote="{midi_note}" midiVelocityLayer="{velocity_layer}" username="{username}"
                   license="{license}">
     </SOUND_SAMPLE>'''.format(**sound)
         sounds_info += '''

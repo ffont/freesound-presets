@@ -2,6 +2,8 @@ import logging
 import os
 import random
 import re
+import json
+import time
 
 import freesound
 
@@ -146,74 +148,78 @@ def download_sounds(sounds, use_converted_files):
         dw_thread.start()
         dw_thread.join()  # Wait until download finishes, we don't support async downloads (yet)
 
-def make_instrument_preset_from_pack(pack_id, max_sounds_to_use=64, use_original_files=False, use_converted_files=False, include_sounds=False):
+def make_instrument_preset_from_pack(pack_id, max_sounds_to_use=128, use_original_files=False, use_converted_files=False, include_sounds=False, max_velocity_layers=4):
     fs_fields_param = "id,previews,license,name,username,analysis,type,filesize,tags,duration,description"
     fs_descriptors_param = "rhythm.onset_times"
-    
+
     # Get sounds info
-    logger.info('- Getting pack info and preparing sounds')
-    pack = freesound_client.get_pack(pack_id)
-    all_results = []
-    results = pack.get_sounds(fields=fs_fields_param, descriptors=fs_descriptors_param, page_size=150)
-    all_results += results
-    while results.next is not None:
-        results = results.next_page()
-        all_results += results 
-    sounds = [prepare_sound(result, use_original=use_original_files, use_converted=use_converted_files) for result in all_results]
+    query_cache_filepath = f'.{pack_id}-{max_sounds_to_use}-{use_original_files}-{use_converted_files}-{include_sounds}-{max_velocity_layers}-query-cache.json'
+    if os.path.exists(query_cache_filepath) and os.path.getmtime(query_cache_filepath) > time.time() - 3 * 3600:
+        # If query cache exists and is not older than 3 hours, use that instead of making new query
+        logger.info('- Getting pack info and preparing sounds (using cached results)')
+        sounds = json.load(open(query_cache_filepath))
+    else:
+        logger.info('- Getting pack info and preparing sounds')
+        pack = freesound_client.get_pack(pack_id)
+        all_results = []
+        results = pack.get_sounds(fields=fs_fields_param, descriptors=fs_descriptors_param, page_size=150)
+        all_results += results
+        while results.next is not None:
+            results = results.next_page()
+            all_results += results 
+        sounds = [prepare_sound(result, use_original=use_original_files, use_converted=use_converted_files) for result in all_results]
+        json.dump(sounds, open(query_cache_filepath, 'w'))
     logger.info('- Found {} sounds!'.format(len(sounds)))
+
+    # Filter out sounds that have no midi_note information
+    sounds = [sound for sound in sounds if 'midi_note' in sound]
 
     # Download the sounds
     if include_sounds:
         logger.info('- Downloading and converting sounds')
         download_sounds(sounds, use_converted_files=use_converted_files)
         
-    # Keep only one velocity layer
-    logger.info('- Removing redundant velocity layers')
-    midi_velocities = [sound['midi_velocity'] for sound in sounds if 'midi_velocity' in sound]
+    # Keep only as many velocity layers as indicated
+    midi_velocities = list(set([sound['midi_velocity'] for sound in sounds if 'midi_velocity' in sound]))
+    n_vel_layers_used = 1
     if len(set(midi_velocities)) > 1:
-        # More than one layer, choose the highest
-        velocity_to_use = max(midi_velocities)
-        sounds = [sound for sound in sounds if sound['midi_velocity'] == velocity_to_use or 'midi_velocity' not in sound]
+        # Keep the N layers with higher values
+        min_velocity_to_use = sorted(midi_velocities)[max(0, len(midi_velocities) - max_velocity_layers)]
+        n_vel_layers_used = sum([1 for vel in midi_velocities if vel >= min_velocity_to_use])
+        sounds = [sound for sound in sounds if sound['midi_velocity'] >= min_velocity_to_use or 'midi_velocity' not in sound]
+    logger.info('- Will use {} velocity layers'.format(n_vel_layers_used))
     
-    # Remove potential midi_note duplicates
-    logger.info('- Removing redundant notes')
+    # Remove potential midi_note/midi_velocity duplicates
     already_used_notes = []
     filtered_sounds = []
-    for sound in [sound for sound in sounds if 'midi_note' in sound]:
-        if sound['midi_note'] not in already_used_notes:
-            filtered_sounds.append(sound)
-            already_used_notes.append(sound['midi_note'])
-    sounds = filtered_sounds
-
-    # Remove some notes if using more than the limit
-    if len(sounds) > max_sounds_to_use:
-        n_to_remove = abs(max_sounds_to_use - len(sounds))
-        logger.info('- Removing {} sounds because exceeding max'.format(n_to_remove))
-        positions_to_remove = list(range(0, len(sounds), len(sounds) // n_to_remove))
-        positions_to_remove = positions_to_remove[:n_to_remove]
-        filtered_sounds = []
-        for i in range(0, len(sounds)):
-            if i not in positions_to_remove:
-                filtered_sounds.append(sounds[i])
-        sounds = filtered_sounds
-
-    # Calculate midi note ranges
-    logger.info('- Calculating midi note ranges')
-    sounds = sorted(sounds, key=lambda x: x['midi_note'])
-    last_midi_note_covered = 0
-    for (current_sound, next_sound) in zip(sounds, sounds[1:] + [None]):
-        if next_sound is not None:
-            end_midi_note_range = current_sound['midi_note'] + (next_sound['midi_note'] - current_sound['midi_note']) // 2
-            midi_notes = list(range(last_midi_note_covered, end_midi_note_range))  
-            last_midi_note_covered = end_midi_note_range
-        else:
-            midi_notes = list(range(last_midi_note_covered, 128))  
-        current_sound['midi_notes'] = sorted(list(set(midi_notes)))
-    all_midi_notes = []
+    removed_notes = 0
     for sound in sounds:
-        all_midi_notes += sound['midi_notes']
-    assert (len(all_midi_notes) == len(set(all_midi_notes))), "Duplicated midi notes found..."
-        
+        key = str(sound['midi_note']) + '_' + str(sound.get('midi_velocity', 0))
+        if key not in already_used_notes:
+            filtered_sounds.append(sound)
+            already_used_notes.append(key)
+        else:
+            removed_notes += 1
+    sounds = filtered_sounds
+    logger.info('- Removed {} redundant notes'.format(removed_notes))
+
+    # Keep only a specific number of notes to be below the maximum number of sounds
+    num_notes_to_keep = 0
+    for i in range(0, max_sounds_to_use, n_vel_layers_used):
+        num_notes_to_keep += 1
+    all_notes = sorted(list(set([sound['midi_note'] for sound in sounds])))
+    if num_notes_to_keep < len(all_notes):
+        n_notes_to_remove = len(all_notes) - num_notes_to_keep
+        n_sounds_to_remove = n_notes_to_remove * n_vel_layers_used
+        logger.info('- Removing {} sounds ({} notes) because exceeding max'.format(n_sounds_to_remove, n_notes_to_remove))
+        notes_to_remove = []
+        index = 0
+        while len(notes_to_remove) < n_notes_to_remove:
+            notes_to_remove.append(int(index * 127/n_notes_to_remove))
+            index += 1
+        sounds = [sound for sound in sounds if sound['midi_note'] not in notes_to_remove]
+
+    logger.info('- {} notes selected with {} velocity layers ({} sounds)'.format(num_notes_to_keep, n_vel_layers_used, len(sounds)))
     return sounds
 
 def make_16pad_preset_from_query(query, use_original_files=False, use_converted_files=False, include_sounds=False, max_duration=0.5):
@@ -260,15 +266,15 @@ if __name__ == '__main__':
             pack_id = int(args.pack)
         except ValueError:
             raise Exception('Invalid --pack parameter, must be an integer')
-        logger.info('Creating {} preset {}'.format(args.type, args.name))
+        logger.info('*** Creating {} preset {}'.format(args.type, args.name))
         sounds = make_instrument_preset_from_pack(pack_id, use_original_files=args.originals, use_converted_files=args.convert, include_sounds=args.include_sounds)
 
     elif args.type == '16pad':
-        logger.info('Creating {} preset {}'.format(args.type, args.name))
+        logger.info('*** Creating {} preset {}'.format(args.type, args.name))
         sounds = make_16pad_preset_from_query(args.query, use_original_files=args.originals, use_converted_files=args.convert, include_sounds=args.include_sounds)
 
     elif args.type == 'loops':
-        logger.info('Creating {} preset {}'.format(args.type, args.name))
+        logger.info('*** Creating {} preset {}'.format(args.type, args.name))
         sounds = make_loops_preset_from_query(args.query, use_original_files=args.originals, use_converted_files=args.convert, include_sounds=args.include_sounds)
 
 
@@ -276,7 +282,7 @@ if __name__ == '__main__':
         if args.loop:
             sound_overwrite_exporter_fields = [{'launchMode': 1} for sound in sounds]
         else:
-            sound_overwrite_exporter_fields = None
+            sound_overwrite_exporter_fields = [{'launchMode': 0} for sound in sounds]
         SourceExporter(
             sounds=sounds, 
             sound_overwrite_exporter_fields=sound_overwrite_exporter_fields, 
