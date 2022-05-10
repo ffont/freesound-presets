@@ -130,6 +130,7 @@ def prepare_sound(sound, use_original=False, use_converted=False):
     data['path'] = path
     data['id'] = sound.id
     data['type'] = sound.type
+    data['filesize'] = sound.filesize
     data['name'] = sound.name
     data['license'] = sound.license    
     data['preview_url'] = sound.previews.preview_hq_ogg

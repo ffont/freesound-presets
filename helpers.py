@@ -183,8 +183,8 @@ class SourceExporter(BaseExporter):
         for count, sound in enumerate(self.sounds):
             sounds_info += '''    
     <SOUND_SAMPLE uuid="{uuid}" name="{name}" 
-                  soundId="{id}" format="{type}" duration="{duration}" soundFromFreesound="1"
-                  previewURL="{preview_url}"
+                  soundId="{id}" format="{type}" duration="{duration}" soundFromFreesound="1" filesize="{filesize}"
+                  previewURL="{preview_url}" 
                   usesPreview="0" midiRootNote="{midi_note}" midiVelocityLayer="{velocity_layer}" username="{username}"
                   license="{license}">
     </SOUND_SAMPLE>'''.format(**sound)
