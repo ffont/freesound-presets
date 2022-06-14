@@ -180,6 +180,7 @@ class SourceExporter(BaseExporter):
                 'midi_notes_hex': all_midi_notes_hex,
                 'launchMode': self.sounds[0]['launchMode']
             })
+        self.sounds = sorted(self.sounds, key=lambda x: int(x['midi_note']))
         for count, sound in enumerate(self.sounds):
             sounds_info += '''    
     <SOUND_SAMPLE uuid="{uuid}" name="{name}" 

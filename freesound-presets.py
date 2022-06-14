@@ -84,9 +84,18 @@ def get_midi_note(sound):
             return note_name_to_number(tag)
         except ValueError:
             pass
-
+    
     # Try finding note names in tokenized sound name
     name = sound.name
+
+    # Below are hardcoded manual fixes for sounds that are wrongly labeled in Freesound, I should contact sound author to fix that
+    if sound.id == 65755:
+        name = name.replace('A2', 'A1')
+    elif sound.id == 65754:
+        name = name.replace('A#2', 'A#1')
+    elif sound.id == 65756:
+        name = name.replace('B2', 'B1')
+
     name_parts = name.replace('-', ' ').replace('_', ' ').replace('.', ' ').split(' ')
     for name_part in name_parts:
         try:
@@ -155,7 +164,7 @@ def make_instrument_preset_from_pack(pack_id, max_sounds_to_use=128, use_origina
 
     # Get sounds info
     query_cache_filepath = f'.{pack_id}-{max_sounds_to_use}-{use_original_files}-{use_converted_files}-{include_sounds}-{max_velocity_layers}-query-cache.json'
-    if os.path.exists(query_cache_filepath) and os.path.getmtime(query_cache_filepath) > time.time() - 3 * 3600:
+    if False and os.path.exists(query_cache_filepath) and os.path.getmtime(query_cache_filepath) > time.time() - 3 * 3600:
         # If query cache exists and is not older than 3 hours, use that instead of making new query
         logger.info('- Getting pack info and preparing sounds (using cached results)')
         sounds = json.load(open(query_cache_filepath))
