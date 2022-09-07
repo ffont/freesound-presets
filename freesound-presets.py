@@ -41,6 +41,10 @@ def note_name_to_number(note_name):
     -----
         Thanks to Brian McFee.
     """
+    if note_name.isnumeric():
+        return int(note_name)
+
+
     # Copied from https://github.com/craffel/pretty-midi
 
     # Map note name to the semitone
@@ -86,7 +90,7 @@ def get_midi_note(sound):
             pass
     
     # Try finding note names in tokenized sound name
-    name = sound.name
+    name = sound.name.split('.')[0]
 
     # Below are hardcoded manual fixes for sounds that are wrongly labeled in Freesound, I should contact sound author to fix that
     if sound.id == 65755:
